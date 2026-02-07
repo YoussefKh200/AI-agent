@@ -1,103 +1,150 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>AI Agent Chat</title>
-    <style>
-        :root{--bg:#f6f8fb;--user:#0b93f6;--assistant:#e5e7eb;--muted:#6b7280}
-        body{font-family:Inter,Segoe UI,Arial,sans-serif;background:var(--bg);margin:0;padding:24px}
-        .container{max-width:900px;margin:0 auto}
-        h1{margin:0 0 12px}
-        #status{margin-bottom:10px;font-weight:700;color:#b60}
-        .chat-window{background:#fff;border-radius:8px;box-shadow:0 6px 18px rgba(15,23,42,0.06);overflow:hidden}
-        #chat{height:440px;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:12px}
-        .row{display:flex;align-items:flex-end;gap:8px}
-        .bubble{max-width:78%;padding:10px 14px;border-radius:14px;line-height:1.35}
-        .user{margin-left:auto;background:linear-gradient(180deg,var(--user),#0366d6);color:#fff;border-bottom-right-radius:4px}
-        .assistant{background:var(--assistant);color:#111;border-bottom-left-radius:4px}
-        .meta{font-size:12px;color:var(--muted);margin-top:6px}
-        .controls{display:flex;padding:12px;border-top:1px solid #eef2f7;gap:8px}
-        input[type=text]{flex:1;padding:10px;border-radius:8px;border:1px solid #d1d5db}
-        input[type=text]:disabled{background:#f3f4f6}
-        button{padding:9px 12px;border-radius:8px;border:none;background:#111;color:#fff}
-        .small{font-size:13px}
-        .top-actions{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-    </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AI Agent Chat</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg:#f6f8fb; --card:#ffffff; --accent:#0b93f6; --accent-2:#0366d6; --muted:#6b7280; --glass: rgba(255,255,255,0.6)
+    }
+    *{box-sizing:border-box}
+    body{font-family:Inter,Segoe UI,Arial,sans-serif;background:linear-gradient(180deg,#f7fafc,#eef2f7);margin:0;padding:28px;color:#0f172a}
+    .wrap{max-width:960px;margin:0 auto}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+    .brand{display:flex;align-items:center;gap:12px}
+    .brand img{width:56px;height:40px}
+    h1{font-size:20px;margin:0}
+    p.lead{margin:0;color:var(--muted);font-size:13px}
+
+    .status-line{display:flex;align-items:center;gap:12px;margin:14px 0}
+    .status-badge{padding:6px 10px;border-radius:999px;background:#fff;border:1px solid #eef2f7;display:inline-flex;align-items:center;gap:8px;font-weight:600}
+    .spinner{width:14px;height:14px;border-radius:50%;border:2px solid rgba(0,0,0,0.08);border-top-color:var(--accent);animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    .chat-window{background:var(--card);border-radius:12px;box-shadow:0 12px 40px rgba(15,23,42,0.08);overflow:hidden}
+    #chat{height:520px;overflow:auto;padding:20px;display:flex;flex-direction:column;gap:14px}
+
+    .msg{display:flex;align-items:flex-end;gap:10px}
+    .msg .avatar{width:36px;height:36px;border-radius:8px;flex:0 0 36px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700}
+    .msg .bubble{padding:10px 14px;border-radius:12px;line-height:1.35;max-width:78%;box-shadow:0 6px 18px rgba(2,6,23,0.03)}
+    .msg.user{flex-direction:row-reverse}
+    .msg.user .bubble{background:linear-gradient(180deg,var(--accent),var(--accent-2));color:#fff;border-bottom-right-radius:6px}
+    .msg.user .avatar{background:linear-gradient(180deg,var(--accent),var(--accent-2))}
+    .msg.bot .bubble{background:#f3f4f6;color:#0f172a;border-bottom-left-radius:6px}
+    .msg.bot .avatar{background:#e6eefb;color:var(--accent-2)}
+
+    .meta{font-size:12px;color:var(--muted);margin-top:6px}
+
+    .controls{display:flex;padding:14px;border-top:1px solid #eef2f7;gap:10px}
+    .controls textarea{flex:1;resize:none;padding:12px;border-radius:10px;border:1px solid #e6e9ef;font-size:14px}
+    .controls button{padding:10px 14px;border-radius:10px;border:none;background:var(--accent-2);color:#fff;font-weight:600}
+    .controls .hint{font-size:12px;color:var(--muted);align-self:center}
+
+    .typing{display:inline-flex;gap:4px;align-items:center}
+    .dot{width:8px;height:8px;background:#9aa4b2;border-radius:50%;opacity:0.6;transform:translateY(0);animation:dot 1s infinite}
+    .dot:nth-child(2){animation-delay:0.12s}
+    .dot:nth-child(3){animation-delay:0.24s}
+    @keyframes dot{50%{transform:translateY(-6px);opacity:1}}
+
+    @media (max-width:640px){ #chat{height:60vh;padding:12px} .brand img{width:44px;height:32px} }
+    /* hero layout styles */
+    .hero-layout{min-height:calc(100vh - 56px);display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:48px 20px}
+    .nav{width:100%;display:flex;justify-content:space-between;align-items:center}
+    .avatar{width: 90px;height:36px;border-radius:30px;background:linear-gradient(180deg,var(--accent),var(--accent-2));color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700}
+    .icon-btn{background:transparent;border:1px solid rgba(15,23,42,0.06);padding:8px;border-radius:8px}
+    .hero{display:flex;align-items:center;justify-content:center;flex:1;width:100%}
+    .hero-card{width:min(960px,100%);background:linear-gradient(180deg,rgba(255,255,255,0.9),rgba(255,255,255,0.8));border-radius:18px;padding:48px;text-align:center;box-shadow:0 30px 80px rgba(15,23,42,0.06)}
+    .hero-icon{width:72px;height:72px;border-radius:18px;background:linear-gradient(180deg,var(--accent),var(--accent-2));color:#fff;margin:0 auto;display:flex;align-items:center;justify-content:center;font-size:32px}
+    .hero-card h2{margin:16px 0 6px;font-size:28px}
+    .hero-sub{margin:0;color:#6b7280;font-weight:600}
+    .hero-note{margin:14px 0 22px;color:#94a3b8}
+    .suggestions{display:flex;gap:18px;justify-content:center}
+    .suggestion{background:#fff;border-radius:12px;padding:18px 20px;min-width:200px;border:1px solid #f1f5f9;text-align:left;cursor:pointer}
+    .suggestion .s-title{font-weight:700}
+    .suggestion .s-sub{font-size:13px;color:var(--muted);margin-top:6px}
+    .bottom-bar{width:100%;display:flex;gap:12px;align-items:center;justify-content:center;margin-top:18px}
+    .input-wrap{width:min(900px,100%);}
+    .input-wrap input{width:100%;padding:16px 20px;border-radius:999px;border:1px solid #e6eef7;font-size:15px}
+    .send-btn{background:linear-gradient(180deg,var(--accent),var(--accent-2));color:#fff;padding:12px 18px;border-radius:999px;border:none;font-weight:700}
+    /* bubble entrance */
+    .bubble{opacity:0;transform:translateY(6px);animation:fade-in .28s ease forwards}
+    @keyframes fade-in{to{opacity:1;transform:translateY(0)}}
+  </style>
 </head>
 <body>
-<div class="container">
-  <div class="top-actions">
-    <h1>AI Agent Chat</h1>
-    <div>
-      <button onclick="clearChat()" class="small">Clear</button>
+  <div class="wrap hero-layout">
+    <div class="nav">
+      <div class="nav-left">
+        <div class="avatar">lo2a.ai</div>
+      </div>
+      <div class="nav-right">
+        <button class="icon-btn" aria-label="Profile">⚙️</button>
+      </div>
+    </div>
+
+    <section class="hero">
+      <div class="hero-card">
+        <div class="hero-icon">🖐️</div>
+        <h2>Hi</h2>
+        <p class="hero-sub">welcome</p>
+        <p class="hero-note">Ready to assist you with anything you need, from answering questions to providing recommendations. Let's get started!</p>
+
+        <div class="suggestions">
+          <button class="suggestion" onclick="useSuggestion('Wanderlust Destinations 2024')">
+            <div class="s-title">Wanderlust Destinations 2024</div>
+            <div class="s-sub">Must-Visit Places</div>
+          </button>
+          <button class="suggestion" onclick="useSuggestion('SayHalo AI: What Sets Us Apart')">
+            <div class="s-title">SayHalo AI: What Sets Us Apart</div>
+            <div class="s-sub">Key Differentiators</div>
+          </button>
+          <button class="suggestion" onclick="useSuggestion('Design Trends on TikTok 2024')">
+            <div class="s-title">Design Trends on TikTok 2024</div>
+            <div class="s-sub">Trending Now</div>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <div class="bottom-bar">
+      <div class="input-wrap">
+        <input id="message" type="text" placeholder="Ask SayHalo anything..." aria-label="Ask" />
+      </div>
+      <button id="sendBtn" onclick="sendMessage()" class="send-btn">Send ➜</button>
     </div>
   </div>
 
-  <div id="status">Loading model...</div>
-  <div class="chat-window">
-    <div id="chat"></div>
-    <div class="controls">
-      <input type="text" id="message" placeholder="Type your message..." onkeypress="if(event.key==='Enter') sendMessage()" disabled />
-      <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
-    </div>
-  </div>
-</div>
+  <script>
+    // New hero UI JS
+    const msgInput = document.getElementById('message');
+    const sendBtn = document.getElementById('sendBtn');
+    let pending = false;
 
-<script>
-  let modelReady = false;
-  const statusEl = document.getElementById('status');
-  const msgInput = document.getElementById('message');
-  const sendBtn = document.getElementById('sendBtn');
+    function useSuggestion(text){ msgInput.value = text; sendMessage(); }
 
-  function addMessage(who, text){
-    const chat = document.getElementById('chat');
-    const row = document.createElement('div'); row.className='row';
-    const bubble = document.createElement('div'); bubble.className='bubble ' + (who==='you'?'user':'assistant');
-    bubble.textContent = text;
-    const meta = document.createElement('div'); meta.className='meta'; meta.textContent = new Date().toLocaleTimeString();
-    if(who==='you'){
-      row.appendChild(bubble); row.appendChild(meta);
-    } else {
-      row.appendChild(bubble); row.appendChild(meta);
+    async function sendMessage(){
+      if(pending) return; const text = msgInput.value.trim(); if(!text) return; pending = true; sendBtn.disabled = true; const prev = sendBtn.innerText; sendBtn.innerText = 'Sending...';
+      try{
+        const r = await fetch('/chat', {method:'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({message: text})});
+        const j = await r.json();
+        // show simple confirmation toast
+        showToast(j.response || '[no response]');
+      }catch(e){ showToast('Error: '+(e.message||e)); }
+      pending = false; sendBtn.disabled = false; sendBtn.innerText = prev; msgInput.value = '';
     }
-    chat.appendChild(row);
-    chat.scrollTop = chat.scrollHeight;
-  }
 
-  function clearChat(){ document.getElementById('chat').innerHTML=''; }
-
-  function setReady(ready){
-    modelReady = ready;
-    if(ready){ statusEl.textContent='Model ready.'; statusEl.style.color='#088f2f'; msgInput.disabled=false; sendBtn.disabled=false; msgInput.focus(); }
-    else { statusEl.textContent='Model is loading...'; statusEl.style.color='#b60'; msgInput.disabled=true; sendBtn.disabled=true; }
-  }
-
-  async function checkStatus(){
-    try{
-      const r = await fetch('/status'); const j = await r.json(); setReady(j.ready);
-    }catch(e){ console.log('status error',e); }
-  }
-  setInterval(checkStatus,2000); checkStatus();
-
-  let pending=false;
-  async function sendMessage(){
-    if(pending) return;
-    const msg = msgInput.value.trim(); if(!msg) return; msgInput.value=''; addMessage('you', msg);
-    if(!modelReady){ addMessage('assistant','Model is still loading. Please wait.'); return; }
-    pending=true; sendBtn.disabled=true; msgInput.disabled=true;
-    addMessage('assistant','...'); // typing placeholder
-    try{
-      const r = await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})});
-      const j = await r.json(); // remove the last typing placeholder
-      const chat = document.getElementById('chat'); chat.removeChild(chat.lastChild);
-      addMessage('assistant', j.response || '[no response]');
-    }catch(e){
-      const chat = document.getElementById('chat'); chat.removeChild(chat.lastChild);
-      addMessage('assistant','Error: '+e.message);
+    function showToast(msg){
+      const t = document.createElement('div'); t.textContent = msg; t.style.position='fixed'; t.style.right='20px'; t.style.bottom='90px'; t.style.background='rgba(15,23,42,0.9)'; t.style.color='#fff'; t.style.padding='12px 16px'; t.style.borderRadius='10px'; t.style.zIndex=9999; document.body.appendChild(t);
+      setTimeout(()=>t.remove(),5000);
     }
-    pending=false; sendBtn.disabled=false; msgInput.disabled=false; msgInput.focus();
-  }
-</script>
+
+    // status poll (keeps model hint updated in console)
+    setInterval(async ()=>{
+      try{ const r = await fetch('/status'); const j = await r.json(); if(j.model_error){ console.warn('model error', j.model_error); }
+      }catch(e){}
+    },3000);
+  </script>
 </body>
 </html>

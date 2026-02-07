@@ -12,6 +12,7 @@ from transformers import pipeline
 from types import SimpleNamespace
 import threading
 import time
+from openai import OpenAI
 
 load_dotenv()
 
@@ -208,6 +209,7 @@ def base64_tool(text: str, action: str = "encode") -> str:
 # Initialize agent placeholder; load model in background to avoid blocking server start
 agent_executor = None
 _model_loading = False
+model_info = {"source": None, "name": None}
 
 def main():
     model = ChatOpenAI(temperature=0)
@@ -248,16 +250,117 @@ def main():
         print()
         
 def load_model_background():
-    global agent_executor, _model_loading
+    global agent_executor, _model_loading, model_info
     if agent_executor is not None or _model_loading:
         return
     _model_loading = True
     try:
         # this may take time (downloads model on first run)
         print("[model loader] Starting model download/load (this may take a minute)...")
-        # use a smaller model to reduce download size and memory usage
-        # create pipeline without generation hyperparams; we'll set them at call time
-        hf_pipeline = pipeline("text-generation", model="distilgpt2", device=-1)
+
+        # If HF_TOKEN is present, prefer using the Hugging Face Inference Router
+        hf_token = os.getenv("HF_TOKEN")
+        if hf_token:
+            try:
+                client = OpenAI(base_url="https://router.huggingface.co/v1", api_key=hf_token)
+
+                class HFAdapterRemote:
+                    def __init__(self, client, model_name="openai/gpt-oss-120b"):
+                        self.client = client
+                        self.model_name = model_name
+
+                    def stream(self, model_input):
+                        try:
+                            msgs = model_input.get("messages") if isinstance(model_input, dict) else None
+                            user_text = getattr(msgs[0], "content", str(msgs[0])) if msgs and len(msgs) > 0 else ""
+
+                            completion = self.client.chat.completions.create(
+                                model=self.model_name,
+                                messages=[{"role": "user", "content": user_text}],
+                            )
+                            text = completion.choices[0].message.content
+                            message = SimpleNamespace(content=text)
+                            yield {"agent": {"messages": [message]}}
+                        except Exception as e:
+                            errstr = str(e)
+                            print(f"[remote adapter] error: {errstr}")
+                            # detect permission / 403 error and fallback to local model
+                            if "403" in errstr or "insufficient permissions" in errstr.lower():
+                                model_info["error"] = errstr
+                                # attempt to instantiate a lightweight local fallback
+                                try:
+                                    import torch
+                                    device = 0 if torch.cuda.is_available() else -1
+                                except Exception:
+                                    device = -1
+
+                                try:
+                                    local_pipe = pipeline("text-generation", model="distilgpt2", device=device)
+
+                                    class LocalAdapter:
+                                        def __init__(self, pipe):
+                                            self.pipe = pipe
+
+                                        def stream(self, model_input_inner):
+                                            try:
+                                                msgs = model_input_inner.get("messages") if isinstance(model_input_inner, dict) else None
+                                                user_text_inner = getattr(msgs[0], "content", str(msgs[0])) if msgs and len(msgs) > 0 else ""
+                                                prompt = (
+                                                    "You are a helpful assistant. Provide a concise, direct answer.\n"
+                                                    f"User: {user_text_inner}\n"
+                                                    "Assistant:"
+                                                )
+                                                out = self.pipe(
+                                                    prompt,
+                                                    max_new_tokens=120,
+                                                    do_sample=False,
+                                                    temperature=0.2,
+                                                    top_p=0.95,
+                                                    repetition_penalty=1.1,
+                                                )
+                                                gen = out[0].get("generated_text") if isinstance(out, list) and isinstance(out[0], dict) else str(out)
+                                                if isinstance(gen, str) and gen.startswith(prompt):
+                                                    gen = gen[len(prompt):]
+                                                gen = gen.strip()
+                                                message = SimpleNamespace(content=gen)
+                                                yield {"agent": {"messages": [message]}}
+                                            except Exception as e2:
+                                                message = SimpleNamespace(content=f"[Fallback model error] {e2}")
+                                                yield {"agent": {"messages": [message]}}
+
+                                    local_adapter = LocalAdapter(local_pipe)
+                                    agent_executor = local_adapter
+                                    model_info["source"] = "local"
+                                    model_info["name"] = "distilgpt2"
+                                    print("[model loader] Remote 403 detected — falling back to local distilgpt2")
+                                    for chunk in local_adapter.stream(model_input):
+                                        yield chunk
+                                    return
+                                except Exception as e_local:
+                                    print(f"[fallback error] {e_local}")
+                                    message = SimpleNamespace(content=f"[Remote model error] {errstr}")
+                                    yield {"agent": {"messages": [message]}}
+                            else:
+                                message = SimpleNamespace(content=f"[Remote model error] {e}")
+                                yield {"agent": {"messages": [message]}}
+
+                tools = [calculator, todo_manager, unit_converter, palindrome_checker, random_number_generator, text_reverser, regex_tool, json_validator, base64_tool]
+                agent_executor = HFAdapterRemote(client)
+                model_info["source"] = "remote"
+                model_info["name"] = "openai/gpt-oss-120b"
+                print("[model loader] Using Hugging Face Inference API (remote model: openai/gpt-oss-120b).")
+                return
+            except Exception as e:
+                print(f"Remote model initialization failed: {e}")
+
+        # Fallback: local pipeline (smaller model to reduce download size and memory usage)
+        try:
+            import torch
+            device = 0 if torch.cuda.is_available() else -1
+        except Exception:
+            device = -1
+
+        hf_pipeline = pipeline("text-generation", model="distilgpt2", device=device)
 
         # Adapter to present a minimal streaming interface expected by the app
         class HFAdapter:
@@ -274,15 +377,12 @@ def load_model_background():
                     else:
                         user_text = ""
 
-                    # Wrap the user's text with a brief system/instruction prompt to guide
-                    # the non-instruction-tuned model toward helpful, concise answers.
                     prompt = (
                         "You are a helpful assistant. Provide a concise, direct answer.\n"
                         f"User: {user_text}\n"
                         "Assistant:"
                     )
 
-                    # Call HF pipeline with tuned generation parameters for more stable output.
                     out = self.pipe(
                         prompt,
                         max_new_tokens=120,
@@ -293,12 +393,10 @@ def load_model_background():
                     )
 
                     gen = out[0].get("generated_text") if isinstance(out, list) and isinstance(out[0], dict) else str(out)
-                    # Strip the prompt prefix if the model echoed it
                     if isinstance(gen, str) and gen.startswith(prompt):
                         gen = gen[len(prompt):]
                     gen = gen.strip()
 
-                    # create a single chunk matching previous structure
                     message = SimpleNamespace(content=gen)
                     chunk = {"agent": {"messages": [message]}}
                     yield chunk
@@ -308,7 +406,9 @@ def load_model_background():
 
         tools = [calculator, todo_manager, unit_converter, palindrome_checker, random_number_generator, text_reverser, regex_tool, json_validator, base64_tool]
         agent_executor = HFAdapter(hf_pipeline, tools=tools)
-        print("[model loader] Model loaded and agent ready")
+        model_info["source"] = "local"
+        model_info["name"] = "distilgpt2"
+        print("[model loader] Local model adapter ready (distilgpt2 fallback).")
     except Exception as e:
         print(f"Model load error: {e}")
     finally:
@@ -354,7 +454,10 @@ def status():
         return jsonify({
             'ready': bool(ready),
             'loading': not ready and _model_loading,
-            'error': None if ready or _model_loading else 'model not initialized'
+            'error': None if ready or _model_loading else 'model not initialized',
+            'model': model_info.get('name'),
+            'model_source': model_info.get('source'),
+            'model_error': model_info.get('error')
         })
     except Exception as e:
         return jsonify({'ready': False, 'loading': False, 'error': str(e)})
