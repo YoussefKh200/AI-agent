@@ -1,7 +1,5 @@
 # AI Agent Chat
 
-![hero](assets/hero.svg)
-
 A lightweight local/web agent that uses Hugging Face models via the Inference Router (or a local Transformers pipeline fallback). This repository provides:
 
 - A Flask web UI (`templates/index.html`) for chat.
@@ -89,7 +87,7 @@ Open http://127.0.0.1:8080 in your browser.
 
 ## Animated Demo
 
-The repository includes a small animated SVG at `assets/hero.svg` used in this README to show the chat hero with subtle motion. You can replace it with a GIF if you prefer.
+The repository includes a small SVG at `assets/demo.svg` used in this README to show the chat hero with subtle motion. You can replace it with a GIF if you prefer.
 
 ## Troubleshooting
 
@@ -115,8 +113,8 @@ The project now includes a centered "Hero" landing UI that serves as the primary
 
 Screenshot (replace this file with your preferred capture):
 
-![Hero UI screenshot](assets/hero-screenshot.png)
+![Hero UI screenshot](assets/demo.png)
 
-To update the screenshot used above, copy your PNG or JPG into `assets/hero-screenshot.png` and commit it to the repo. The README will render the image automatically on GitHub.
+To update the screenshot used above, copy your PNG or JPG into `assets/demo.png` and commit it to the repo. The README will render the image automatically on GitHub.
 
 If you'd like I can embed an animated preview GIF or add a small walkthrough showing the suggestion-card interactions and how messages are sent to `/chat`.
