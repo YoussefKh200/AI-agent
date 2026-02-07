@@ -9,4 +9,8 @@ dependencies = [
     "langchain-openai",
     "langgraph",
     "python-dotenv",
+    "flask",
+    "transformers",
+    "torch",
+    "langchain-huggingface",
 ]
