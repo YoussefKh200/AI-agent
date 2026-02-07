@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string, jsonify
+from flask import Flask, request, render_template, jsonify
 from langchain_core.messages import HumanMessage
 from langchain_huggingface import HuggingFacePipeline
 from langchain.tools import tool
@@ -9,6 +9,7 @@ import os
 import json
 from pathlib import Path
 from transformers import pipeline
+from types import SimpleNamespace
 import threading
 import time
 
@@ -208,6 +209,44 @@ def base64_tool(text: str, action: str = "encode") -> str:
 agent_executor = None
 _model_loading = False
 
+def main():
+    model = ChatOpenAI(temperature=0)
+
+    tools=[calculator, todo_manager, unit_converter, wiki_lookup]
+    agent_executor = create_react_agent(model=model, tools=tools)
+
+    print("Welcome I'm your assistant for today. How can i help you!")
+    print("Type 'exit' to quit the program.")
+
+    while True:
+        user_input = input("\nYou:").strip()
+
+        if user_input.lower() == 'exit':
+            print("if you need any help in the future, just ask. Goodbye!")
+            break
+
+        print("\nassistant:", end="")
+        try:
+            for chunk in agent_executor.stream(
+                {"messages": [HumanMessage(content=user_input)]}
+            ):
+                if "agent" in chunk and "messages" in chunk["agent"]:
+                    for message in chunk["agent"]["messages"]:
+                        print(message.content, end="")
+        except openai.RateLimitError as e:
+            # show detailed error returned by OpenAI (without revealing API key)
+            print(f"\n[OpenAI RateLimitError] {e}", end="")
+            if hasattr(e, 'response') and getattr(e.response, 'text', None):
+                try:
+                    print(f"\nDetails: {e.response.text}", end="")
+                except Exception:
+                    pass
+            print("\nCheck your OpenAI account billing and quota: https://platform.openai.com/account/billing/overview", end="")
+        except Exception as e:
+            print(f"\n[Error] Unexpected error: {e}", end="")
+
+        print()
+        
 def load_model_background():
     global agent_executor, _model_loading
     if agent_executor is not None or _model_loading:
@@ -215,10 +254,61 @@ def load_model_background():
     _model_loading = True
     try:
         # this may take time (downloads model on first run)
-        hf_pipeline = pipeline("text-generation", model="openai-community/gpt2-medium", max_length=100, temperature=0.7)
-        model = HuggingFacePipeline(pipeline=hf_pipeline)
+        print("[model loader] Starting model download/load (this may take a minute)...")
+        # use a smaller model to reduce download size and memory usage
+        # create pipeline without generation hyperparams; we'll set them at call time
+        hf_pipeline = pipeline("text-generation", model="distilgpt2", device=-1)
+
+        # Adapter to present a minimal streaming interface expected by the app
+        class HFAdapter:
+            def __init__(self, pipe, tools=None):
+                self.pipe = pipe
+                self.tools = tools or []
+
+            def stream(self, model_input):
+                # model_input expected like {"messages":[HumanMessage(...)]}
+                try:
+                    msgs = model_input.get("messages") if isinstance(model_input, dict) else None
+                    if msgs and len(msgs) > 0:
+                        user_text = getattr(msgs[0], "content", str(msgs[0]))
+                    else:
+                        user_text = ""
+
+                    # Wrap the user's text with a brief system/instruction prompt to guide
+                    # the non-instruction-tuned model toward helpful, concise answers.
+                    prompt = (
+                        "You are a helpful assistant. Provide a concise, direct answer.\n"
+                        f"User: {user_text}\n"
+                        "Assistant:"
+                    )
+
+                    # Call HF pipeline with tuned generation parameters for more stable output.
+                    out = self.pipe(
+                        prompt,
+                        max_new_tokens=120,
+                        do_sample=False,
+                        temperature=0.2,
+                        top_p=0.95,
+                        repetition_penalty=1.1,
+                    )
+
+                    gen = out[0].get("generated_text") if isinstance(out, list) and isinstance(out[0], dict) else str(out)
+                    # Strip the prompt prefix if the model echoed it
+                    if isinstance(gen, str) and gen.startswith(prompt):
+                        gen = gen[len(prompt):]
+                    gen = gen.strip()
+
+                    # create a single chunk matching previous structure
+                    message = SimpleNamespace(content=gen)
+                    chunk = {"agent": {"messages": [message]}}
+                    yield chunk
+                except Exception as e:
+                    message = SimpleNamespace(content=f"[Model error] {e}")
+                    yield {"agent": {"messages": [message]}}
+
         tools = [calculator, todo_manager, unit_converter, palindrome_checker, random_number_generator, text_reverser, regex_tool, json_validator, base64_tool]
-        agent_executor = create_react_agent(model=model, tools=tools)
+        agent_executor = HFAdapter(hf_pipeline, tools=tools)
+        print("[model loader] Model loaded and agent ready")
     except Exception as e:
         print(f"Model load error: {e}")
     finally:
@@ -229,48 +319,11 @@ threading.Thread(target=load_model_background, daemon=True).start()
 
 app = Flask(__name__)
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>AI Agent Chat</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        #chat { border: 1px solid #ccc; height: 400px; overflow-y: scroll; padding: 10px; margin-bottom: 10px; }
-        input[type="text"] { width: 80%; padding: 5px; }
-        button { padding: 5px 10px; }
-    </style>
-</head>
-<body>
-    <h1>AI Agent Chat</h1>
-    <div id="chat"></div>
-    <input type="text" id="message" placeholder="Type your message..." onkeypress="if(event.key=='Enter') sendMessage()">
-    <button onclick="sendMessage()">Send</button>
-    <script>
-        function sendMessage() {
-            const msg = document.getElementById('message').value;
-            if (!msg) return;
-            document.getElementById('chat').innerHTML += '<p><strong>You:</strong> ' + msg + '</p>';
-            document.getElementById('message').value = '';
-            fetch('/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: msg })
-            })
-            .then(response => response.json())
-            .then(data => {
-                document.getElementById('chat').innerHTML += '<p><strong>Assistant:</strong> ' + data.response + '</p>';
-                document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
-            });
-        }
-    </script>
-</body>
-</html>
-"""
+# UI template moved to templates/index.html
 
 @app.route('/')
 def index():
-    return render_template_string(HTML_TEMPLATE)
+    return render_template('index.html')
 
 @app.route('/chat', methods=['POST'])
 def chat():
@@ -280,16 +333,32 @@ def chat():
         return jsonify({'response': 'Please enter a message.'})
 
     try:
+        # If model still loading, inform the user
+        if agent_executor is None:
+            return jsonify({'response': 'Model is still loading. Please wait a moment and try again.'})
         response_text = ""
         for chunk in agent_executor.stream({"messages": [HumanMessage(content=user_input)]}):
             if "agent" in chunk and "messages" in chunk["agent"]:
                 for message in chunk["agent"]["messages"]:
                     response_text += message.content
         return jsonify({'response': response_text})
-    except openai.RateLimitError as e:
-        return jsonify({'response': f'[OpenAI RateLimitError] {e}\nCheck your billing: https://platform.openai.com/account/billing/overview'})
     except Exception as e:
         return jsonify({'response': f'[Error] {e}'})
 
+
+@app.route('/status', methods=['GET'])
+def status():
+    """Return whether the model is ready."""
+    try:
+        ready = agent_executor is not None
+        return jsonify({
+            'ready': bool(ready),
+            'loading': not ready and _model_loading,
+            'error': None if ready or _model_loading else 'model not initialized'
+        })
+    except Exception as e:
+        return jsonify({'ready': False, 'loading': False, 'error': str(e)})
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    print("Starting server on http://0.0.0.0:8080")
+    app.run(host='0.0.0.0', port=8080, debug=True)

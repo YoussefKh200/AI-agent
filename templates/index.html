@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>AI Agent Chat</title>
+    <style>
+        :root{--bg:#f6f8fb;--user:#0b93f6;--assistant:#e5e7eb;--muted:#6b7280}
+        body{font-family:Inter,Segoe UI,Arial,sans-serif;background:var(--bg);margin:0;padding:24px}
+        .container{max-width:900px;margin:0 auto}
+        h1{margin:0 0 12px}
+        #status{margin-bottom:10px;font-weight:700;color:#b60}
+        .chat-window{background:#fff;border-radius:8px;box-shadow:0 6px 18px rgba(15,23,42,0.06);overflow:hidden}
+        #chat{height:440px;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:12px}
+        .row{display:flex;align-items:flex-end;gap:8px}
+        .bubble{max-width:78%;padding:10px 14px;border-radius:14px;line-height:1.35}
+        .user{margin-left:auto;background:linear-gradient(180deg,var(--user),#0366d6);color:#fff;border-bottom-right-radius:4px}
+        .assistant{background:var(--assistant);color:#111;border-bottom-left-radius:4px}
+        .meta{font-size:12px;color:var(--muted);margin-top:6px}
+        .controls{display:flex;padding:12px;border-top:1px solid #eef2f7;gap:8px}
+        input[type=text]{flex:1;padding:10px;border-radius:8px;border:1px solid #d1d5db}
+        input[type=text]:disabled{background:#f3f4f6}
+        button{padding:9px 12px;border-radius:8px;border:none;background:#111;color:#fff}
+        .small{font-size:13px}
+        .top-actions{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+    </style>
+</head>
+<body>
+<div class="container">
+  <div class="top-actions">
+    <h1>AI Agent Chat</h1>
+    <div>
+      <button onclick="clearChat()" class="small">Clear</button>
+    </div>
+  </div>
+
+  <div id="status">Loading model...</div>
+  <div class="chat-window">
+    <div id="chat"></div>
+    <div class="controls">
+      <input type="text" id="message" placeholder="Type your message..." onkeypress="if(event.key==='Enter') sendMessage()" disabled />
+      <button id="sendBtn" onclick="sendMessage()" disabled>Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let modelReady = false;
+  const statusEl = document.getElementById('status');
+  const msgInput = document.getElementById('message');
+  const sendBtn = document.getElementById('sendBtn');
+
+  function addMessage(who, text){
+    const chat = document.getElementById('chat');
+    const row = document.createElement('div'); row.className='row';
+    const bubble = document.createElement('div'); bubble.className='bubble ' + (who==='you'?'user':'assistant');
+    bubble.textContent = text;
+    const meta = document.createElement('div'); meta.className='meta'; meta.textContent = new Date().toLocaleTimeString();
+    if(who==='you'){
+      row.appendChild(bubble); row.appendChild(meta);
+    } else {
+      row.appendChild(bubble); row.appendChild(meta);
+    }
+    chat.appendChild(row);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function clearChat(){ document.getElementById('chat').innerHTML=''; }
+
+  function setReady(ready){
+    modelReady = ready;
+    if(ready){ statusEl.textContent='Model ready.'; statusEl.style.color='#088f2f'; msgInput.disabled=false; sendBtn.disabled=false; msgInput.focus(); }
+    else { statusEl.textContent='Model is loading...'; statusEl.style.color='#b60'; msgInput.disabled=true; sendBtn.disabled=true; }
+  }
+
+  async function checkStatus(){
+    try{
+      const r = await fetch('/status'); const j = await r.json(); setReady(j.ready);
+    }catch(e){ console.log('status error',e); }
+  }
+  setInterval(checkStatus,2000); checkStatus();
+
+  let pending=false;
+  async function sendMessage(){
+    if(pending) return;
+    const msg = msgInput.value.trim(); if(!msg) return; msgInput.value=''; addMessage('you', msg);
+    if(!modelReady){ addMessage('assistant','Model is still loading. Please wait.'); return; }
+    pending=true; sendBtn.disabled=true; msgInput.disabled=true;
+    addMessage('assistant','...'); // typing placeholder
+    try{
+      const r = await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})});
+      const j = await r.json(); // remove the last typing placeholder
+      const chat = document.getElementById('chat'); chat.removeChild(chat.lastChild);
+      addMessage('assistant', j.response || '[no response]');
+    }catch(e){
+      const chat = document.getElementById('chat'); chat.removeChild(chat.lastChild);
+      addMessage('assistant','Error: '+e.message);
+    }
+    pending=false; sendBtn.disabled=false; msgInput.disabled=false; msgInput.focus();
+  }
+</script>
+</body>
+</html>
